@@ -317,9 +317,11 @@ as_tibble(log1p(y[y>0] / 1e6)) %>%
   theme_minimal()
 ```
 
-The target variable has a wide range of values. Its distribution is right-skewed. For modelling we will use log-transformed target. 
+The target variable has a wide range of values. Its distribution is right-skewed. For modelling we will use
+log-transformed target. 
 
-Only `r round(length(y[y!=0]) / length(y) * 100, 2)`% of all transactions have non-zero revenue:
+BTW, only `r round(length(y[y!=0]) / length(y) * 100, 2)`% 
+of all transactions have non-zero revenue:
 
 ```{r rev0, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
 tr %>% 
@@ -390,6 +392,20 @@ p2 <- tr %>%
 
 multiplot(p1, p2, cols = 1)     
 ```
+
+There is an interesting separation in target variable by **isTrueDirect** feature:
+```{r target_time_isTD, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+tr %>% 
+  bind_cols(as_tibble(y)) %>% 
+  group_by(date, isTrueDirect) %>% 
+  summarize(revenue = mean(value)) %>% 
+  ungroup()  %>% 
+  ggplot(aes(x = date, y = revenue, color = isTrueDirect)) + 
+  stat_smooth(aes(color = isTrueDirect)) +
+  labs(x = "") +
+  theme_minimal()
+```
+
 
 ## Distribution of visits and revenue by attributes
 
@@ -558,7 +574,30 @@ tr %>%
 # Alluvial diagram
 This kind of plot is useful for discovering of multi-feature interactions. 
 The vertical size of each block is proportional to the frequency of the feature. 
-The figure shows the flows for the case when revenue > 0:
+This plot shows high flows from the US and UK desktops with Chrome.
+
+```{r al1, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+tr %>% 
+  select(country, networkDomain, browser, deviceCategory, channelGrouping) %>% 
+  mutate(networkDomain = str_split(networkDomain, "\\.") %>% map(~ .x[[length(.x)]]) %>% unlist) %>% 
+  mutate_all(factor) %>% 
+  mutate_all(fct_lump, 4) %>% 
+  bind_cols(tibble(revenue = ifelse(y == 0, "Zero", "Non-zero") %>% factor)) %>% 
+  na.omit() %>% 
+  group_by_all() %>% 
+  count() %>% 
+  ggplot(aes(y = n, 
+             axis1 = country, axis2 = deviceCategory, axis3 = browser,   
+             axis4 = channelGrouping, axis5 = networkDomain)) +
+  geom_alluvium(aes(fill = revenue), width = 1/12) +
+  geom_stratum(width = 1/10, fill = "black", color = "grey") +
+  geom_label(stat = "stratum", label.strata = TRUE) +
+  theme_minimal() +
+  scale_x_continuous(breaks = 1:5, labels = c("country", "deviceCategory", "browser",
+                                               "channelGrouping", "networkDomain"))
+```
+
+The next figure shows the flows for the case when revenue > 0:
 ```{r al2, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
 tr %>% 
   select(country, networkDomain, browser, deviceCategory, channelGrouping) %>% 
@@ -698,7 +737,7 @@ X <- tr_te_ohe[tri, ]
 X_test <- tr_te_ohe[-tri, ]
 rm(tr_te_ohe); invisible(gc())
 ```
-The next step is to create a cross-validated LASSO linear regression model:
+The next step is to create a cross-validated LASSO model:
 ```{r glm2, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
 m_glm <- cv.glmnet(X, log1p(y), alpha = 0, family="gaussian", 
                    type.measure = "mse", nfolds = 5)
@@ -824,4 +863,4 @@ write_csv(te_pred, "../output/te_pred.csv")
 ```
 
 
-The End...
+# The End by DD Consulting

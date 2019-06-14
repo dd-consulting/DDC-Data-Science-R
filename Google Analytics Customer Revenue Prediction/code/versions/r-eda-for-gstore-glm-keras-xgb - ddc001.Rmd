@@ -2,18 +2,14 @@
 title: "Google Analytics Customer Revenue Prediction EDA"
 output:
   html_document:
-    code_folding: show
-    fig_caption: yes
     fig_height: 4.5
     fig_width: 7.5
-    highlight: tango
-    number_sections: yes
     theme: cosmo
-    toc: yes
-  pdf_document:
-    toc: yes
-  word_document:
-    toc: yes
+    highlight: tango
+    number_sections: true
+    fig_caption: true
+    toc: true
+    code_folding: show
 ---
 
 # Introduction
@@ -115,15 +111,17 @@ multiplot(p1, p2, cols = 2)
 ```
 
 ## Dataset columns
-There is a total of 13 features: 
+There is a total of 12 features: 
 
+* **fullVisitorId** - an unique identifier for each user of the Google Merchandise Store
 * **channelGrouping** - the channel via which the user came to the Store
-* **customDimensions** - customer profile
 * **date** - the date on which the user visited the Store
 * **device** - the specifications for the device used to access the Store
-* **fullVisitorId** - an unique identifier for each user of the Google Merchandise Store
 * **geoNetwork** - this section contains information about the geography of the user
+
+* **sessionId** - an unique identifier for this visit to the store
 * **hits** - user actions during the session
+
 * **socialEngagementType** - engagement type, either "Socially Engaged" or "Not Socially Engaged"
 * **totals** - this section contains aggregate values across the session
 * **trafficSource** - this section contains information about the Traffic Source from which the session originated
@@ -150,7 +148,7 @@ tr %>% select(fullVisitorId, channelGrouping, date,
 At least one column can be removed.
 
 ## JSON data
-Actually the columns **device**, **geoNetwork**, **trafficSource**, **totals**, **customDimensions**, **hits** contain data in JSON format. 
+Actually the columns **device**, **geoNetwork**, **trafficSource**, **totals** contain data in JSON format. 
 To parse it we can use [jsonlite](https://cran.r-project.org/web/packages/jsonlite/) package but due to inconsistency 
 of the data form the **trafficSource** column we need some addional tricks. I suggest to use the code, 
 which is based on [this idea](https://www.kaggle.com/mrlong/r-flatten-json-columns-to-make-single-data-frame):
@@ -161,13 +159,11 @@ flatten_json <- . %>%
   fromJSON(flatten = T)
 
 parse <- . %>% 
-  bind_cols(flatten_json(.$customDimensions[0])) %>% 
-  bind_cols(flatten_json(.$hits[0])) %>% 
   bind_cols(flatten_json(.$device)) %>%
   bind_cols(flatten_json(.$geoNetwork)) %>% 
   bind_cols(flatten_json(.$trafficSource)) %>% 
   bind_cols(flatten_json(.$totals)) %>% 
-  select(-customDimensions, -hits, -device, -geoNetwork, -trafficSource, -totals)
+  select(-device, -geoNetwork, -trafficSource, -totals)
 ```
 **str_c** function is a little faster than **paste()**.
 
@@ -196,18 +192,11 @@ kable(head(subm, 5))
 
 ## Train and test features sets intersection
 ```{r tr_te_fea_int, result='asis', echo=TRUE}
-# setdiff(names(tr), names(te))
-tr %<>% select(-one_of("transactions"))
-tr %<>% select(-one_of("totalTransactionRevenue"))
-te %<>% select(-one_of("transactions"))
-te %<>% select(-one_of("totalTransactionRevenue"))
-te %<>% select(-one_of("transactionRevenue"))
-
 setdiff(names(tr), names(te))
+## tr %<>% select(-one_of("campaignCode"))
 ```
-
-The test set lacks one columns, which is a target variable **transactionRevenue**.
-
+The test set lacks two columns. One column is a target variable **transactionRevenue**.
+The second column (**campaignCode**) we remove from the train set.
 
 ## Constant columns
 Let's find constant columns: 
@@ -219,12 +208,6 @@ tr %<>% select(-one_of(fea_del))
 te %<>% select(-one_of(fea_del))
 ```
 All these useless features we can safely remove.
-
-## Expanded train features
-```{r tr_te_fea_expand, result='asis', echo=TRUE}
-names(tr)
-# names(te)
-```
 
 ## Missing values
 After parsing of the JSON data we can observe many missing values in the data set.
@@ -239,7 +222,7 @@ tr %<>% mutate_all(list(~ifelse(is_na_val(.), NA, .)))
 te %<>% mutate_all(list(~ifelse(is_na_val(.), NA, .)))
 ```
 ```{r nas1, result='asis', echo=FALSE}
-tr %>% summarise_all(list(~sum(is.na(.))/n()*100)) %>% 
+tr %>% summarise_all(funs(sum(is.na(.))/n()*100)) %>% 
 gather(key="feature", value="missing_pct") %>% 
   ggplot(aes(x=reorder(feature,-missing_pct),y=missing_pct)) +
   geom_bar(stat="identity", fill="steelblue")+
@@ -250,17 +233,10 @@ gather(key="feature", value="missing_pct") %>%
 
 There is a bunch of features missing nearly completely. 
 
-## data transformations
+## Simple transformations
 We need to convert some features to their natural representation.
 
 ```{r tf1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
-tr[0:3,]
-```
-```{r tf2, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
-te[0:3,]
-```
-
-```{r tf3, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
 tr %<>%
   mutate(date = ymd(date),
          hits = as.integer(hits1),
@@ -268,16 +244,13 @@ tr %<>%
          bounces = as.integer(bounces),
          newVisits = as.integer(newVisits),
          transactionRevenue = as.numeric(transactionRevenue))
-tr %<>% select(-one_of("hits1"))
          
 te %<>%
   mutate(date = ymd(date),
          hits = as.integer(hits1),
          pageviews = as.integer(pageviews),
          bounces = as.integer(bounces),
-         newVisits = as.integer(newVisits)) 
-te %<>% select(-one_of("hits1"))
-
+         newVisits = as.integer(newVisits))         
 ``` 
 
 ## Target variable
@@ -317,9 +290,11 @@ as_tibble(log1p(y[y>0] / 1e6)) %>%
   theme_minimal()
 ```
 
-The target variable has a wide range of values. Its distribution is right-skewed. For modelling we will use log-transformed target. 
+The target variable has a wide range of values. Its distribution is right-skewed. For modelling we will use
+log-transformed target. 
 
-Only `r round(length(y[y!=0]) / length(y) * 100, 2)`% of all transactions have non-zero revenue:
+BTW, only `r round(length(y[y!=0]) / length(y) * 100, 2)`% 
+of all transactions have non-zero revenue:
 
 ```{r rev0, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
 tr %>% 
@@ -347,7 +322,7 @@ tr %>%
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
 ```
 
-Also usually first/less visit users generate more total revenue:
+Also usually first visit users generate more total revenue:
 
 ```{r rev2, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
 tr %>% 
@@ -390,6 +365,124 @@ p2 <- tr %>%
 
 multiplot(p1, p2, cols = 1)     
 ```
+
+There is an interesting separation in target variable by **isTrueDirect** feature:
+```{r target_time_isTD, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+tr %>% 
+  bind_cols(as_tibble(y)) %>% 
+  group_by(date, isTrueDirect) %>% 
+  summarize(revenue = mean(value)) %>% 
+  ungroup()  %>% 
+  ggplot(aes(x = date, y = revenue, color = isTrueDirect)) + 
+  stat_smooth(aes(color = isTrueDirect)) +
+  labs(x = "") +
+  theme_minimal()
+```
+
+## Revenue forecasting
+Let's see if we can predict log-transformed mean daily revenue using timeseries.
+Here we use [zoo](https://cran.r-project.org/web/packages/zoo/index.html) and 
+[forecast](https://cran.r-project.org/web/packages/forecast/index.html) packages
+for timeseries modelling:
+```{r fc1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+tr %>% 
+  bind_cols(tibble(revenue = y)) %>% 
+  group_by(date) %>% 
+  summarize(mean_revenue = log1p(mean(revenue/1e6))) %>% 
+  ungroup() %>% 
+  with(zoo(mean_revenue, order.by = date)) ->
+  revenue
+  
+h <- max(te$date) - min(te$date) + 1
+  
+revenue %>% 
+  autoplot() + 
+  geom_line() +
+  geom_smooth() + 
+  labs(x = "", y = "log(revenue)") +
+  theme_minimal()
+```
+
+We use simple auto.arima model. We need to forecast for the period of
+`r h` days.
+
+```{r fc2, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+m_aa <- auto.arima(revenue)
+summary(m_aa)
+
+forecast(m_aa, h = h) %>% 
+  autoplot() + 
+  theme_minimal()
+```
+
+Clearly, this model is of no use for long time period forecasting. 
+
+Let's add a regression term **mean pageviews**:
+
+```{r fc3, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+tr %>% 
+  group_by(date) %>% 
+  summarize(mean_pv = log1p(mean(pageviews, na.rm=TRUE))) %>% 
+  ungroup() %$% 
+  mean_pv ->
+  mean_pv_tr
+
+te %>% 
+  group_by(date) %>% 
+  summarize(mean_pv = log1p(mean(pageviews, na.rm=TRUE))) %>% 
+  ungroup() %$% 
+  mean_pv ->
+  mean_pv_te
+```
+
+```{r fc4, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+m_aa_reg <- auto.arima(revenue, xreg = mean_pv_tr)
+summary(m_aa_reg)
+
+forecast(m_aa_reg, h = h, xreg = mean_pv_te) %>% 
+  autoplot() + 
+  theme_minimal()
+```
+
+This forecast looks much better. It is possible to use it in a more complex model.
+
+## Time features
+The dataset contains the timestamp column **visitStartTime** expressed as POSIX time.
+It allows us to create a bunch of features. Let's check symmetric differences of the
+time features from the train and test sets.
+
+```{r tfea1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+tr_vst <- as_datetime(tr$visitStartTime)
+te_vst <- as_datetime(te$visitStartTime)
+
+symdiff <- function(x, y) setdiff(union(x, y), intersect(x, y))
+```
+Year:
+```{r tfea2, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+symdiff(tr_vst %>% year %>% unique, te_vst %>% year %>% unique)
+```
+Month:
+```{r tfea3, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+symdiff(tr_vst %>% month %>% unique, te_vst %>% month %>% unique)
+```
+Day:
+```{r tfea4, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+symdiff(tr_vst %>% day %>% unique, te_vst %>% day %>% unique)
+```
+Week:
+```{r tfea5, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+symdiff(tr_vst %>% week %>% unique, te_vst %>% week %>% unique)
+```
+Day of the year:
+```{r tfea6, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+symdiff(tr_vst %>% yday %>% unique, te_vst %>% yday %>% unique)
+```
+Hour:
+```{r tfea7, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+symdiff(tr_vst %>% hour %>% unique, te_vst %>% hour %>% unique)
+```
+We can see that some time features (week, month, day of the year) from the train and test sets 
+differ notably. Thus, they can cause overfitiing, but **year** and **hour** can be useful.
 
 ## Distribution of visits and revenue by attributes
 
@@ -545,7 +638,7 @@ tr %>%
 ```    
 
 
-## Findings:
+Resume:
 
 * The most frequent channels are **OrganicSearch** and **Social**.
 * Chrome is the most popular browser and its users produce the highest total revenue.
@@ -558,7 +651,30 @@ tr %>%
 # Alluvial diagram
 This kind of plot is useful for discovering of multi-feature interactions. 
 The vertical size of each block is proportional to the frequency of the feature. 
-The figure shows the flows for the case when revenue > 0:
+This plot shows high flows from the US and UK desktops with Chrome.
+
+```{r al1, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+tr %>% 
+  select(country, networkDomain, browser, deviceCategory, channelGrouping) %>% 
+  mutate(networkDomain = str_split(networkDomain, "\\.") %>% map(~ .x[[length(.x)]]) %>% unlist) %>% 
+  mutate_all(factor) %>% 
+  mutate_all(fct_lump, 4) %>% 
+  bind_cols(tibble(revenue = ifelse(y == 0, "Zero", "Non-zero") %>% factor)) %>% 
+  na.omit() %>% 
+  group_by_all() %>% 
+  count() %>% 
+  ggplot(aes(y = n, 
+             axis1 = country, axis2 = deviceCategory, axis3 = browser,   
+             axis4 = channelGrouping, axis5 = networkDomain)) +
+  geom_alluvium(aes(fill = revenue), width = 1/12) +
+  geom_stratum(width = 1/10, fill = "black", color = "grey") +
+  geom_label(stat = "stratum", label.strata = TRUE) +
+  theme_minimal() +
+  scale_x_continuous(breaks = 1:5, labels = c("country", "deviceCategory", "browser",
+                                               "channelGrouping", "networkDomain"))
+```
+
+The next figure shows the flows for the case when revenue > 0:
 ```{r al2, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
 tr %>% 
   select(country, networkDomain, browser, deviceCategory, channelGrouping) %>% 
@@ -584,6 +700,172 @@ tr %>%
 Non-zero transaction revenue in the main is yielded by the flow 
 US-desktop-Chrome-{OrganicSearch | Referral}-net.
 
+# Bot or not?
+Although it's a complex topic we can at least inspect traffic from some 
+countries and network domains and analyze revenue produced by that traffic. We are interested
+in traffic which yields zero transaction revenue. Important attributes are:
+
+* **browser**
+* **networkDomain**
+* **country**
+
+Let's have a look at "strange" browsers:
+```{r bot1, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+bot_browsers <- c("Mozilla Compatible Agent", "Seznam", "User Agent", 
+                  "Changa 99695759","ThumbSniper","LYF_LS_4002_12",
+                  "[Use default User-agent string] LIVRENPOCHE", "no-ua",
+                  "YE", "0","subjectAgent: NoticiasBoom")
+tr %>% 
+  bind_cols(tibble(revenue = y)) %>% 
+  filter(revenue == 0 & browser %in% bot_browsers) %>% 
+  group_by(browser)%>% 
+  summarize(visits = n()) %>% 
+  ungroup() %>% 
+  ggplot(aes(reorder(browser, -visits), visits)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(x = "browser", y = "visits") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position="none")+
+  geom_text(aes(label = visits), vjust = -0.2, color = "black", size=2.5) 
+```
+
+The absolute leader here is "Mozilla Compatible Agent" - very often bots can be identified by
+this user agent. Here is a time series of the bots visits:
+
+```{r bot2, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+tr %>%
+  bind_cols(tibble(revenue = y)) %>%
+  filter(revenue == 0) %>%
+  filter(browser == "Mozilla Compatible Agent") %>%
+  group_by(date) %>%
+  summarize(visits = n()) %>%
+  ungroup() %>%
+  ggplot(aes(x = date, y = visits)) +
+  geom_line() +
+  geom_smooth() +
+  labs(x = "") +
+  theme_minimal()
+```   
+
+We can clearly observe some peaks. Let's detect dates of these peaks:
+```{r bot3, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+tr %>%
+  bind_cols(tibble(revenue = y)) %>%
+  filter(revenue == 0) %>%
+  filter(browser == "Mozilla Compatible Agent") %>%
+  group_by(date) %>%
+  summarize(visits = n()) %>%
+  ungroup() %>%
+  arrange(-visits) %>% 
+  top_n(10)
+```
+
+Let's inspect another attributes:
+```{r bot4, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+tr %>%
+  bind_cols(tibble(revenue = y)) %>%
+  filter(revenue == 0) %>%
+  filter(browser == "Mozilla Compatible Agent") %>%
+  select(date, networkDomain, country) %>% 
+  mutate(networkDomain = str_split(networkDomain, "\\.") %>% map(~ .x[[length(.x)]]) %>% unlist) %>% 
+  group_by_all() %>% 
+  summarize(visits = n()) %>% 
+  ungroup() %>% 
+  arrange(-visits) %>% 
+  na.omit() %>% 
+  top_n(10)
+```
+```{r bot5, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+p1 <- tr %>%
+  bind_cols(tibble(revenue = y)) %>%
+  filter(revenue == 0) %>%
+  filter(browser == "Mozilla Compatible Agent") %>%
+  group_by(country) %>% 
+  summarize(visits = n()) %>% 
+  ungroup() %>% 
+  arrange(-visits) %>% 
+  na.omit() %>% 
+  top_n(10) %>% 
+  ggplot(aes(reorder(country, -visits), visits)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(x = "country", y = "visits") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position="none")+
+  geom_text(aes(label = visits), vjust = -0.2, color = "black", size=2.5) 
+
+p2 <- tr %>%
+  bind_cols(tibble(revenue = y)) %>%
+  filter(revenue == 0) %>%
+  filter(browser == "Mozilla Compatible Agent") %>%
+  mutate(networkDomain = str_split(networkDomain, "\\.") %>% map(~ .x[[length(.x)]]) %>% unlist) %>% 
+  group_by(networkDomain) %>% 
+  summarize(visits = n()) %>% 
+  ungroup() %>% 
+  arrange(-visits) %>% 
+  na.omit() %>% 
+  top_n(10) %>% 
+  ggplot(aes(reorder(networkDomain, -visits), visits)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(x = "networkDomain", y = "visits") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position="none")+
+  geom_text(aes(label = visits), vjust = -0.2, color = "black", size=2.5) 
+
+multiplot(p1, p2, cols=2)
+```
+
+In general, the traffic from the USA and .net domains is the main contributor 
+to the visits with "Mozilla Compatible Agent" 
+user agent, but the peak on 2017-07-31 is caused by the visits from Japan.
+
+# World map: important values
+
+ ```{r map, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+highchart(type = "map") %>%
+  hc_add_series_map(worldgeojson,
+                    tr %>% 
+                      bind_cols(as_tibble(y)) %>% 
+                      group_by(country) %>% 
+                      summarise(revenue = log1p(sum(value))) %>% 
+                      ungroup() %>% 
+                      mutate(iso2 = countrycode(country, origin="country.name", destination="iso2c")),
+                    value = "revenue", joinBy = "iso2") %>%
+  hc_title(text = "log Revenue by country") %>%
+  hc_tooltip(useHTML = TRUE, headerFormat = "",
+             pointFormat = "{point.country}: {point.revenue:.0f}") %>% 
+  hc_colorAxis(minColor = "#e8eded", maxColor = "#4c735e")
+             
+highchart(type = "map") %>%
+  hc_add_series_map(worldgeojson, 
+                    tr %>% 
+                      group_by(country) %>% 
+                      summarise(pageviews = sum(pageviews)) %>% 
+                      ungroup() %>% 
+                      mutate(iso2 = countrycode(country, origin="country.name", destination="iso2c")),
+                    value = "pageviews", 
+                    joinBy = "iso2") %>%
+  hc_title(text = "Pageviews by country") %>%
+  hc_tooltip(useHTML = TRUE, headerFormat = "",
+             pointFormat = "{point.country}: {point.pageviews}") %>% 
+  hc_colorAxis(minColor = "#e8eded", maxColor = "#4c735e")
+
+highchart(type = "map") %>%
+  hc_add_series_map(worldgeojson, 
+                    tr %>% 
+                      group_by(country) %>% 
+                      summarise(hits = sum(hits)) %>% 
+                      ungroup() %>% 
+                      mutate(iso2 = countrycode(country, origin="country.name", destination="iso2c")),
+                    value = "hits", 
+                    joinBy = "iso2") %>%
+  hc_title(text = "Hits by country") %>%
+  hc_tooltip(useHTML = TRUE, headerFormat = "",
+             pointFormat = "{point.country}: {point.hits}") %>% 
+  hc_colorAxis(minColor = "#e8eded", maxColor = "#4c735e")
+```    
 
 # Correlations between revenue and features
 Some features are categorical and we reencode them as OHE (with reduced set of levels). 
@@ -597,7 +879,7 @@ m <- tr %>%
          isMobile = ifelse(isMobile, 1L, 0L),
          isTrueDirect = ifelse(isMobile, 1L, 0L)) %>% 
   mutate_all(funs(ifelse(is.na(.), 0, .))) %>% 
-  select(-date, -fullVisitorId, -visitId) %>% 
+  select(-date, -fullVisitorId, -visitId, -hits1) %>% 
   mutate_if(is.character, factor) %>% 
   mutate_if(is.factor, fct_lump, prop = 0.01) %>% 
   model.matrix(~ . - 1, .) %>% 
@@ -614,10 +896,10 @@ m %>%
 ```
 
 The values of the correlation coefficient are concentrated around zero, but there
-are several values bigger than 0.3:
+are several values bigger than 0.1:
 ```{r cor2, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
 m %>% 
-  filter(rho > 0.3) %>% 
+  filter(rho > 0.1) %>% 
   kable()
 ```
 
@@ -649,9 +931,98 @@ multiplot(p1, p2, cols = 2)
 
 Here we observe weak positive relationship. Although, these features can play important role in a statistical model.
 
+# Simple autoencoder
+To train an autoencoder we can use [h2o package](https://cran.r-project.org/web/packages/h2o/index.html):
+```{r ae0, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+h2o.no_progress()
+h2o.init(nthreads = 2, max_mem_size = "3G")
 
-# Revenue Predictive models 
-It is always useful to create several analtical models and compare them. Here for all models we use a preprocessed dataset:
+tr_h2o <- as.h2o(tr)
+te_h2o <- as.h2o(te)
+
+n_ae <- 4
+```
+Let’s train a simple model, which compresses the input space to `r n_ae` components:
+```{r ae1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+m_ae <- h2o.deeplearning(training_frame = tr_h2o,
+                         x = 1:ncol(tr_h2o),
+                         autoencoder = T,
+                         activation="Rectifier",
+                         reproducible = TRUE,
+                         seed = 0,
+                         sparse = T,
+                         standardize = TRUE,
+                         hidden = c(32, n_ae, 32),
+                         max_w2 = 5,
+                         epochs = 25)
+tr_ae <- h2o.deepfeatures(m_ae, tr_h2o, layer = 2) %>% as_tibble
+te_ae <- h2o.deepfeatures(m_ae, te_h2o, layer = 2) %>% as_tibble
+
+rm(tr_h2o, te_h2o, m_ae); invisible(gc())
+h2o.shutdown(prompt = FALSE)
+```
+```{r ae2, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
+plot.pairs <- function(x, y, n=5, b=20){
+  pairs(x[, 1:n], cex = 0.15,
+        col=alpha(rainbow(b)[as.numeric(cut(y, breaks=b))], 0.2), asp=1)
+}
+
+plot.pairs(tr_ae, log1p(y), n_ae)
+plot.pairs(te_ae, 1, n_ae)
+```
+
+In the figures we can observe a two-class separation. 
+This information can be useful for statistical models.
+
+# Linear Mixed Model
+In this section I'd like to present a [linear mixed model](https://en.wikipedia.org/wiki/Mixed_model).
+The data set in this competition is hierarchical and contains session-level entries, 
+but we have to predict aggregated - user level - values. We can consider rows with 
+identical **fullVisitorId** as repeated measurements.
+Thus, the grouping factor here is **fullVisitorId**. For the LMM we will use the most important variables 
+identified by the XGB model. There are several packages for LMM in R. 
+I use the [lme4](https://cran.r-project.org/web/packages/lme4/) package. 
+You can find a tutorial for LMM  [here](https://cran.r-project.org/web/packages/lme4/vignettes/lmer.pdf).
+```{r lmm1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+tri <- 1:nrow(tr)
+data <- tr %>% 
+  bind_cols(tibble(revenue = y)) %>% 
+  bind_rows(te) %>% 
+  select(revenue, pageviews, hits, visitNumber, fullVisitorId) %>% 
+  mutate_each(funs(as.numeric(.) %>% log1p), -fullVisitorId) %>% 
+  mutate(pageviews = ifelse(is.na(pageviews), 0, pageviews))
+  
+m_lmm0 <- glmer(revenue ~ (1|fullVisitorId), data = data[tri, ])
+
+bg_var <- summary(m_lmm0)$varcor$fullVisitorId[1]
+resid_var <- attr(summary(m_lmm0)$varcor, "sc")^2
+
+summary(m_lmm0)
+```
+The between-group-variance is estimated as `r bg_var`.
+The total variance is equal to `r (bg_var + resid_var)`.
+Thus, the [intraclass-correlation coefficient (ICC)](https://en.wikipedia.org/wiki/Intraclass_correlation) 
+is equal to `r round(bg_var/(bg_var + resid_var), 3)`.
+Such low ICC demonstrates that the rows in the same group don't resemble each other that much.
+
+Let's create more complex models:
+
+```{r lmm2, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+m_lmm1 <- update(m_lmm0, revenue ~ pageviews + (1|fullVisitorId))
+m_lmm2 <- update(m_lmm0, revenue ~ pageviews + hits + (1|fullVisitorId))
+m_lmm3 <- update(m_lmm0, revenue ~ pageviews + hits + visitNumber + (1|fullVisitorId))
+
+anova(m_lmm0, m_lmm1, m_lmm2, m_lmm3)
+
+pred_lmm <- predict(m_lmm3)
+
+rm(data, m_lmm0, m_lmm1, m_lmm2, m_lmm3); invisible(gc())
+```
+The most complex model has the lowest AIC and we will use it for predictions.
+
+# Basic models 
+It is always useful at the begining of the competition to create several simple models and compare 
+them. Here for all models we use a preprocessed dataset:
 
 ```{r bm1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
 grp_mean <- function(x, grp) ave(x, grp, FUN = function(x) mean(x, na.rm = TRUE))
@@ -668,7 +1039,7 @@ tr_te <- tr %>%
          isMobile = ifelse(isMobile, 1L, 0L),
          isTrueDirect = ifelse(isTrueDirect, 1L, 0L),
          adwordsClickInfo.isVideoAd = ifelse(!adwordsClickInfo.isVideoAd, 0L, 1L)) %>% 
-  select(-date, -fullVisitorId, -visitId, -visitStartTime, -sessionQualityDim, -timeOnSite) %>% 
+  select(-date, -fullVisitorId, -visitId, -hits, -hits1, -customDimensions, -sessionQualityDim, -timeOnSite, -transactions, -totalTransactionRevenue, -transactionRevenue, -visitStartTime) %>% 
   mutate_if(is.character, factor) %>% 
   mutate(pageviews_mean_vn = grp_mean(pageviews, visitNumber),
          pageviews_mean_country = grp_mean(pageviews, country),
@@ -680,8 +1051,24 @@ tr_te <- tr %>%
 # rm(tr, te, tr_ae, te_ae); invisible(gc())
 ```
 
+To make a submission file we will use this function:
+```{r bm2, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+submit <- . %>% 
+  as_tibble() %>% 
+  set_names("y") %>% 
+  mutate(y = ifelse(y < 0, 0, expm1(y))) %>% 
+  bind_cols(id) %>% 
+  group_by(fullVisitorId) %>% 
+  summarise(y = log1p(sum(y))) %>% 
+  right_join(
+    read_csv("../input/sample_submission.csv"), 
+    by = "fullVisitorId") %>% 
+  mutate(PredictedLogRevenue = round(y, 5)) %>% 
+  select(-y) %>% 
+  write_csv(sub)
+```
 
-## GLMNET - Generalized linear model
+## GLMNET
 For the **glmnet** model we need a model matrix. We replace **NA** values with zeros, 
 rare factor levels are lumped:
 ```{r glm1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
@@ -698,7 +1085,7 @@ X <- tr_te_ohe[tri, ]
 X_test <- tr_te_ohe[-tri, ]
 rm(tr_te_ohe); invisible(gc())
 ```
-The next step is to create a cross-validated LASSO linear regression model:
+The next step is to create a cross-validated LASSO model:
 ```{r glm2, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
 m_glm <- cv.glmnet(X, log1p(y), alpha = 0, family="gaussian", 
                    type.measure = "mse", nfolds = 5)
@@ -708,13 +1095,52 @@ Finally, we create predictions of the LASSO model
 pred_glm_tr <- predict(m_glm, X, s = "lambda.min") %>% c()
 pred_glm <- predict(m_glm, X_test, s = "lambda.min") %>% c()
 sub <- "glmnet_gs.csv"
-# submit(pred_glm)
-pred_glm[0:10]
+submit(pred_glm)
+
 rm(m_glm); invisible(gc())
 ```
 
-## XGB - Gradient boosting decision trees
-At last, we are ready to create an XGB model. First, 
+## Keras
+For a neural net we can use the same model matrix. Let's create a simple
+sequential model:
+```{r nn1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+m_nn <- keras_model_sequential() 
+m_nn %>% 
+  layer_dense(units = 256, activation = "relu", input_shape = ncol(X)) %>% 
+  layer_dropout(rate = 0.5) %>% 
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(rate = 0.25) %>%
+  layer_dense(units = 1, activation = "linear")
+```
+Next, we compile the model with appropriate parameters:
+```{r nn3, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+m_nn %>% compile(loss = "mean_squared_error",
+                 metrics = custom_metric("rmse", function(y_true, y_pred) 
+                   k_sqrt(metric_mean_squared_error(y_true, y_pred))),
+                 optimizer = optimizer_adadelta())
+```
+Then we train the model:
+```{r nn4, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+history <- m_nn %>% 
+  fit(X, log1p(y), 
+      epochs = 50, 
+      batch_size = 128, 
+      verbose = 0, 
+      validation_split = 0.2,
+      callbacks = callback_early_stopping(patience = 5))
+```
+And finally, predictions:
+```{r nn5, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
+pred_nn_tr <- predict(m_nn, X) %>% c()
+pred_nn <- predict(m_nn, X_test) %>% c()
+sub <- "keras_gs.csv"
+submit(pred_nn)
+
+rm(m_nn, X, X_test); invisible(gc())
+```
+
+## XGB
+At last, we are ready to create a simple XGB model. First, 
 we need to preprocess the dataset. We don't care about **NA** 
 values - XGB handles them by default:
 
@@ -723,7 +1149,7 @@ tr_te_xgb <- tr_te %>%
   mutate_if(is.factor, as.integer) %>% 
   glimpse()
   
-rm(tr_te); invisible(gc()) 
+# rm(tr_te); invisible(gc()) 
 ```
 
 Second, we create train, validation and test sets. We use time-based split:
@@ -734,7 +1160,7 @@ dtr <- xgb.DMatrix(data = data.matrix(tr_te_xgb[idx, ]), label = log1p(y[idx]))
 dval <- xgb.DMatrix(data = data.matrix(tr_te_xgb[!idx, ]), label = log1p(y[!idx]))
 dtrain <- xgb.DMatrix(data = data.matrix(tr_te_xgb), label = log1p(y))
 cols <- colnames(tr_te_xgb)
-rm(tr_te_xgb); invisible(gc)
+# rm(tr_te_xgb); invisible(gc)
 ```
 The next step is to train the model:
 ```{r xgb3, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
@@ -764,16 +1190,18 @@ pred_xgb_tr <- predict(m_xgb, dtrain)
 pred_xgb <- predict(m_xgb, dtest) 
 sub <- "xgb_gs.csv"
 # submit(pred_xgb)
-pred_xgb[0:10]
-rm(dtr, dtrain, dval, dtest, m_xgb); invisible(gc)
 
+# rm(dtr, dtrain, dval, dtest, m_xgb); invisible(gc)
+
+pred_glm_tr <- pred_xgb_tr
+pred_nn_tr <- pred_xgb_tr
 ```
-As it was stated earlier, **hits** and **pageviews** plays important roles in the XGB model. 
+As it was stated earlier, **pageviews** plays an important role in the XGB model. 
 
 ## Distributions of predictions
 Let's compare predictions for the train set:
 ```{r pr_cmp0, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
-tibble(glmnet = pred_glm_tr, xgb = pred_xgb_tr, y = log1p(y)) %>% 
+tibble(lmm = pred_lmm, glmnet = pred_glm_tr, keras = pred_nn_tr, xgb = pred_xgb_tr, y = log1p(y)) %>% 
   mutate_all(funs(ifelse(. < 0, 0, .))) %>% 
   gather() %>% 
   ggplot(aes(x=value, fill=key)) +
@@ -789,12 +1217,12 @@ As we can see the distributions of the predictions are quite different. The XGB 
 tends to produce more narrow interval - closer to the true distribution.
 
 ```{r pr_cmp1, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
-pred_avg <- log1p((expm1(pred_glm) + expm1(pred_xgb)) / 2)
+pred_avg <- log1p((expm1(pred_glm) + expm1(pred_nn) + expm1(pred_xgb)) / 3)
 sub <- "avg_gs.csv"
-# submit(pred_xgb)
+submit(pred_xgb)
 ```
 ```{r pr_cmp2, result='asis', message=FALSE, warning=FALSE, echo=FALSE}
-tibble(glmnet = pred_glm, xgb = pred_xgb, avg = pred_avg) %>% 
+tibble(glmnet = pred_glm, xgb = pred_xgb, keras = pred_nn, avg = pred_avg) %>% 
   mutate_all(funs(ifelse(. < 0, 0, .))) %>% 
   gather() %>% 
   ggplot(aes(x=value, fill=key)) +
@@ -809,19 +1237,4 @@ tibble(glmnet = pred_glm, xgb = pred_xgb, avg = pred_avg) %>%
 Distributions of the predictions for the test set differ much too, 
 nevertheless after proper tuning of the models they can be useful for ensembling.
 
-## Output/Write results to csv:
-
-```{r pr_csv, result='asis', message=FALSE, warning=FALSE, echo=TRUE}
-tr_dollar <- y/(10^6)
-te_dollar <- exp(pred_avg)
-
-tr_actl <- cbind(tr, tr_dollar)
-te_pred <- cbind(te, te_dollar)
-
-write_csv(tr_actl, "../output/tr_actl.csv")
-write_csv(te_pred, "../output/te_pred.csv")
-
-```
-
-
-The End...
+To be continued...

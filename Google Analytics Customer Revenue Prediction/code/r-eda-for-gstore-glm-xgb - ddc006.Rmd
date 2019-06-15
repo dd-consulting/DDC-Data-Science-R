@@ -818,8 +818,8 @@ te_dollar <- exp(pred_avg)
 tr_actl <- cbind(tr, tr_dollar)
 te_pred <- cbind(te, te_dollar)
 
-write_csv(tr_actl, "../output/tr_actl.csv")
-write_csv(te_pred, "../output/te_pred.csv")
+write_csv(tr_actl, "../output/tr_actl - Tableau.csv")
+write_csv(te_pred, "../output/te_pred - Tableau.csv")
 
 ```
 

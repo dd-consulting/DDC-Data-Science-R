@@ -1,3 +1,5 @@
-2019 © DDC
+Learning experience
 
-Some rights reserved
+* R
+* R Studio
+* Tableau

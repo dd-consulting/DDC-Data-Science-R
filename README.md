@@ -1,1 +1,2 @@
-### 2019 © DD Consulting
+2019 © DDC
+Some rights reserved
